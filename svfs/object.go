@@ -73,7 +73,6 @@ func (o *Object) open(mode fuse.OpenFlags, flags *fuse.OpenResponseFlags) (oh *O
 		return oh, nil
 	}
 	if mode.IsWriteOnly() {
-
 		o.m.Lock()
 		ChangeCache.Add(o.c.Name, o.path, o)
 
@@ -84,11 +83,9 @@ func (o *Object) open(mode fuse.OpenFlags, flags *fuse.OpenResponseFlags) (oh *O
 
 		// Remove segments
 		if o.segmented && oh.create {
-			err = deleteSegments(o.cs.Name, o.sh[ManifestHeader])
-			if err != nil {
+			if err = o.removeSegments(); err != nil {
 				return oh, err
 			}
-			oh.target.segmented = false
 		}
 
 		// Create new object
@@ -113,6 +110,9 @@ func (o *Object) Setattr(ctx context.Context, req *fuse.SetattrRequest, resp *fu
 	// them with O_TRUNC flag.
 	if req.Valid.Size() {
 		o.so.Bytes = int64(req.Size)
+		if req.Size == 0 && o.segmented {
+			return o.removeSegments()
+		}
 		return nil
 	}
 
@@ -138,6 +138,15 @@ func (o *Object) Setattr(ctx context.Context, req *fuse.SetattrRequest, resp *fu
 // Name gets the name of the underlying swift object.
 func (o *Object) Name() string {
 	return o.name
+}
+
+func (o *Object) removeSegments() error {
+	o.segmented = false
+	if err := deleteSegments(o.cs.Name, o.sh[ManifestHeader]); err != nil {
+		return err
+	}
+	delete(o.sh, ManifestHeader)
+	return nil
 }
 
 func (o *Object) size() uint64 {

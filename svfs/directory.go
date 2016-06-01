@@ -232,9 +232,6 @@ func (d *Directory) Lookup(ctx context.Context, req *fuse.LookupRequest, resp *f
 
 	// Find matching child
 	if item := DirectoryCache.Get(d.c.Name, d.path, req.Name); item != nil {
-		if n, ok := item.(*Container); ok {
-			return n, nil
-		}
 		if n, ok := item.(*Directory); ok {
 			return n, nil
 		}
@@ -289,50 +286,19 @@ func (d *Directory) Name() string {
 // Remove deletes a direntry and relevant node. It is not supported on container
 // nodes. It handles standard and segmented object deletion.
 func (d *Directory) Remove(ctx context.Context, req *fuse.RemoveRequest) error {
-	path := d.path + req.Name
+	var (
+		path = d.path + req.Name
+		node = DirectoryCache.Get(d.c.Name, d.path, req.Name)
+	)
 
-	if req.Dir {
-		path += "/"
-		node := DirectoryCache.Get(d.c.Name, d.path, req.Name)
-
-		dir, ok := node.(*Directory)
-		if !ok {
-			return fuse.ENOTSUP
-		}
-
-		SwiftConnection.ObjectDelete(dir.c.Name, dir.so.Name)
-		if _, found := DirectoryCache.Peek(dir.c.Name, dir.path); found {
-			DirectoryCache.DeleteAll(dir.c.Name, dir.path)
-		}
-		DirectoryCache.Delete(dir.c.Name, d.path, dir.name)
-
+	if directory, ok := node.(*Directory); ok {
+		return d.removeDirectory(directory, req.Name)
+	}
+	if object, ok := node.(*Object); ok {
+		return d.removeObject(object, req.Name, path)
 	}
 
-	if !req.Dir {
-		// Get the old node from the cache
-		node := DirectoryCache.Get(d.c.Name, d.path, req.Name)
-		if object, ok := node.(*Object); ok {
-			// Segmented object removal. We need to find all segments
-			// using the manifest segment prefix then bulk delete
-			// them and remove the manifest enventually.
-			if object.segmented {
-				_, h, err := SwiftConnection.Object(d.c.Name, path)
-				if err != nil {
-					return err
-				}
-				if !SegmentPathRegex.Match([]byte(h[ManifestHeader])) {
-					return fmt.Errorf("Invalid segment path for manifest %s", req.Name)
-				}
-				if err := deleteSegments(d.cs.Name, h[ManifestHeader]); err != nil {
-					return err
-				}
-			}
-		}
-		SwiftConnection.ObjectDelete(d.c.Name, path)
-		DirectoryCache.Delete(d.c.Name, d.path, req.Name)
-	}
-
-	return nil
+	return fuse.ENOTSUP
 }
 
 func (d *Directory) Setattr(ctx context.Context, req *fuse.SetattrRequest, resp *fuse.SetattrResponse) error {
@@ -391,12 +357,40 @@ func (d *Directory) moveManifest(oldContainer, oldPath, oldName, newContainer, n
 	return nil
 }
 
+func (d *Directory) removeDirectory(directory *Directory, name string) error {
+	SwiftConnection.ObjectDelete(directory.c.Name, directory.so.Name)
+	if _, found := DirectoryCache.Peek(directory.c.Name, directory.path); found {
+		DirectoryCache.DeleteAll(directory.c.Name, directory.path)
+	}
+
+	DirectoryCache.Delete(directory.c.Name, d.path, directory.name)
+
+	return nil
+}
+
+func (d *Directory) removeObject(object *Object, name, path string) error {
+	if object.segmented {
+		_, h, err := SwiftConnection.Object(d.c.Name, path)
+		if err != nil {
+			return err
+		}
+		if !SegmentPathRegex.Match([]byte(h[ManifestHeader])) {
+			return fmt.Errorf("Invalid segment path for manifest %s", name)
+		}
+		if err := deleteSegments(d.cs.Name, h[ManifestHeader]); err != nil {
+			return err
+		}
+	}
+
+	SwiftConnection.ObjectDelete(d.c.Name, path)
+	DirectoryCache.Delete(d.c.Name, d.path, name)
+
+	return nil
+}
+
 // Rename moves a node from its current directory node to a new directory node and updates
 // the cache.
 func (d *Directory) Rename(ctx context.Context, req *fuse.RenameRequest, newDir fs.Node) error {
-	if t, ok := newDir.(*Container); ok {
-		return d.move(d.c.Name, d.path, req.OldName, t.c.Name, t.path, req.NewName)
-	}
 	if t, ok := newDir.(*Directory); ok {
 		return d.move(d.c.Name, d.path, req.OldName, t.c.Name, t.path, req.NewName)
 	}
@@ -420,6 +414,8 @@ func (d *Directory) Symlink(ctx context.Context, req *fuse.SymlinkRequest) (fs.N
 	w.Close()
 
 	link := &Symlink{
+		c:    d.c,
+		p:    d,
 		name: req.NewName,
 		path: absPath,
 		sh:   headers,
@@ -428,8 +424,6 @@ func (d *Directory) Symlink(ctx context.Context, req *fuse.SymlinkRequest) (fs.N
 			Name:        absPath,
 			Bytes:       0,
 		},
-		p: d,
-		c: d.c,
 	}
 
 	DirectoryCache.Set(d.c.Name, d.path, req.NewName, link)

@@ -96,14 +96,14 @@ func createContainer(name string) (*swift.Container, error) {
 	return &c, nil
 }
 
-func createManifest(container, segmentsPath, path string) error {
-	headers := map[string]string{
+func createManifest(obj *Object, container, segmentsPath, path string) error {
+	obj.sh = map[string]string{
 		ManifestHeader:   segmentsPath,
 		"Content-Length": "0",
 		AutoContent:      "true",
 	}
 
-	manifest, err := SwiftConnection.ObjectCreate(container, path, false, "", "", headers)
+	manifest, err := SwiftConnection.ObjectCreate(container, path, false, "", "", obj.sh)
 	if err != nil {
 		return err
 	}

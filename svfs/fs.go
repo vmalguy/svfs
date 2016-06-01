@@ -96,12 +96,10 @@ func (s *SVFS) Root() (fs.Node, error) {
 			return nil, err
 		}
 
-		return &Container{
-			Directory: &Directory{
-				apex: true,
-				c:    &baseContainer,
-				cs:   &segmentContainer,
-			},
+		return &Directory{
+			apex: true,
+			c:    &baseContainer,
+			cs:   &segmentContainer,
 		}, nil
 	}
 

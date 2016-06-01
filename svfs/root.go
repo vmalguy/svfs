@@ -90,15 +90,13 @@ func (r *Root) ReadDirAll(ctx context.Context) (direntries []fuse.Dirent, err er
 		}
 
 		// Register direntries and cache entries
-		child := Container{
-			Directory: &Directory{
-				c:    c,
-				cs:   segmentContainers[c.Name],
-				name: c.Name,
-			},
+		child := &Directory{
+			c:    c,
+			cs:   segmentContainers[c.Name],
+			name: c.Name,
 		}
 
-		children[c.Name] = &child
+		children[c.Name] = child
 		direntries = append(direntries, child.Export())
 	}
 
@@ -117,9 +115,6 @@ func (r *Root) Lookup(ctx context.Context, req *fuse.LookupRequest, resp *fuse.L
 
 	// Find matching child
 	if item := DirectoryCache.Get("", r.path, req.Name); item != nil {
-		if n, ok := item.(*Container); ok {
-			return n, nil
-		}
 		if n, ok := item.(*Directory); ok {
 			return n, nil
 		}
